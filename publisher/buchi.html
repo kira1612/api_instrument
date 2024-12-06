@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Buchi 1 Mqtt Publisher</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        select, button {
+            padding: 8px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-bottom: 16px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #serial-monitor {
+            white-space: pre-wrap;
+            font-family: 'Courier New', Courier, monospace;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #fff;
+            border-radius: 4px;
+            height: 300px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        .data-display {
+            margin-top: 10px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+        }
+    </style>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1 style="text-align: center;">Buchi 1 Mqtt Publisher</h1>
+        <button onclick="startSerialMonitor()">Start Serial Monitor</button>
+        <div id="serial-monitor"></div>
+        <div id="serial-number" class="data-display"></div>
+        <div id="auto-l" class="data-display"></div>
+        <div id="auto-m" class="data-display"></div>
+        <div id="auto-r" class="data-display"></div>
+        <div id="result-man-l-0" class="data-display"></div>
+        <div id="result-man-m-0" class="data-display"></div>
+        <div id="result-man-r-0" class="data-display"></div>
+        <div id="average" class="data-display"></div>
+        <div id="std-deviation" class="data-display"></div>
+    </div>
+
+    <script>
+        let port = null;
+        let reader = null;
+        let buffer = '';
+        let client = null;
+        let isMQTTConnected = false;
+
+        function connectMQTT() {
+            client = mqtt.connect('ws://broker.hivemq.com:8000/mqtt');
+
+            client.on('connect', function () {
+                console.log('Connected to MQTT broker');
+                isMQTTConnected = true;
+            });
+
+            client.on('error', function (error) {
+                console.error('MQTT Connection Error: ', error);
+            });
+        }
+
+        function publishData() {
+            if (!isMQTTConnected) {
+                console.error('MQTT client not connected');
+                return;
+            }
+
+            // Publish each data with topic prefixed by "buchi_"
+            publishToMQTT('buchi_resultManL_0', document.getElementById('result-man-l-0').textContent.split(': ')[1]);
+            publishToMQTT('buchi_resultManM_0', document.getElementById('result-man-m-0').textContent.split(': ')[1]);
+            publishToMQTT('buchi_resultManR_0', document.getElementById('result-man-r-0').textContent.split(': ')[1]);
+            publishToMQTT('buchi_autoL', document.getElementById('auto-l').textContent.split(': ')[1]);
+            publishToMQTT('buchi_autoM', document.getElementById('auto-m').textContent.split(': ')[1]);
+            publishToMQTT('buchi_autoR', document.getElementById('auto-r').textContent.split(': ')[1]);
+            publishToMQTT('buchi_average', document.getElementById('average').textContent.split(': ')[1]);
+            publishToMQTT('buchi_stdDeviation', document.getElementById('std-deviation').textContent.split(': ')[1]);
+            publishToMQTT('buchi_serialNumber', document.getElementById('serial-number').textContent.split(': ')[1]);
+
+            console.log('Data published to MQTT');
+        }
+
+        function publishToMQTT(topic, message) {
+            if (client && isMQTTConnected) {
+                client.publish(topic, message);
+                console.log(`Published to MQTT topic ${topic}: ${message}`);
+            } else {
+                console.error('MQTT client not connected');
+            }
+        }
+
+        async function startSerialMonitor() {
+            try {
+                connectMQTT();
+                const options = { baudRate: 19200 }; // Sesuaikan baudRate sesuai kebutuhan
+                port = await navigator.serial.requestPort();
+                await port.open(options);
+
+                reader = port.readable.getReader();
+                readLoop();
+            } catch (error) {
+                console.error('Error opening serial port:', error);
+            }
+        }
+
+        async function readLoop() {
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        console.log('Reader has been released');
+                        break;
+                    }
+
+                    const textDecoder = new TextDecoder();
+                    const decodedString = textDecoder.decode(value);
+                    buffer += decodedString;
+
+                    processData();
+                }
+            } catch (error) {
+                console.error('Error reading data:', error);
+            }
+        }
+
+        function processData() {
+            while (buffer.includes('</Melting_Point>')) {
+                const xmlStart = buffer.indexOf('<?xml');
+                const xmlEnd = buffer.indexOf('</Melting_Point>') + '</Melting_Point>'.length;
+                if (xmlStart !== -1 && xmlEnd !== -1) {
+                    const xmlString = buffer.substring(xmlStart, xmlEnd);
+                    buffer = buffer.substring(xmlEnd);
+
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(xmlString, 'text/xml');
+
+                    // Tampilkan nilai dari elemen XML yang diinginkan
+                    displayValue(xmlDoc, 'Serial_Number', 'serial-number');
+                    displayValue(xmlDoc, 'AutoL', 'auto-l');
+                    displayValue(xmlDoc, 'AutoM', 'auto-m');
+                    displayValue(xmlDoc, 'AutoR', 'auto-r');
+                    displayValue(xmlDoc, 'ResultManL_0', 'result-man-l-0');
+                    displayValue(xmlDoc, 'ResultManM_0', 'result-man-m-0');
+                    displayValue(xmlDoc, 'ResultManR_0', 'result-man-r-0');
+                    displayValue(xmlDoc, 'Average', 'average');
+                    displayValue(xmlDoc, 'StdDeviation', 'std-deviation');
+
+                    // Tampilkan data XML di div serial-monitor
+                    const monitorElement = document.getElementById('serial-monitor');
+                    monitorElement.innerText = xmlString;
+                    monitorElement.scrollTop = monitorElement.scrollHeight;
+
+                    // Publish data ke MQTT setelah memproses
+                    publishData();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        function displayValue(xmlDoc, tagName, elementId) {
+            const element = xmlDoc.getElementsByTagName(tagName)[0];
+            if (element) {
+                const value = element.textContent.trim();
+                const displayElement = document.getElementById(elementId);
+                displayElement.textContent = `${tagName}: ${value}`;
+            } else {
+                console.error(`Tag <${tagName}> not found in XML`);
+            }
+        }
+
+        window.addEventListener('beforeunload', () => {
+            if (port && port.readable) {
+                port.readable.cancel();
+                port.close();
+            }
+        });
+    </script>
+</body>
+</html>
