@@ -54,5 +54,5 @@ app.get("/api/all-mqtt-data", (req, res) => {
 // Jalankan server
 const PORT = 3000;
 app.listen(PORT, () => {
-    console.log(`API server is running on http://10.3.171.122:${PORT}`);
+    console.log(`API server is running on https://kira1612.github.io/api_instrument/:${PORT}`);
 });
